@@ -1,0 +1,14 @@
+apiVersion: 1
+
+datasources:
+    - name: InfluxDB_V2
+      type: influxdb
+      access: proxy
+      url: http://influxdb:8086
+      jsonData:
+        version: Flux
+        organization: enviro_monitor
+        defaultBucket: sensor_data
+        tlsSkipVerify: true
+      secureJsonData:
+        token: 575240710090d4565a81862736ed4c6bdc3157a4720710099c10c236f52dbdb5
