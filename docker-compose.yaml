@@ -4,8 +4,8 @@ services:
     image: eclipse-mosquitto:latest
     restart: unless-stopped
     ports:
-      - "1883:1883"
-      - "9001:9001"
+      - 1883:1883
+      - 9001:9001
     volumes:
       - type: bind
         source: ./mosquitto.conf
@@ -60,7 +60,7 @@ services:
       - influxdb2
     restart: unless-stopped
     ports:
-      - '3000:3000'
+      - 3000:3000
     volumes:
       - type: volume
         source: grafana-data

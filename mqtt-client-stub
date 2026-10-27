@@ -1,0 +1,17 @@
+#!/bin/bash
+
+while [ 1 ]
+do
+    mosquitto_pub --host localhost --port 1883 -t 'sensor1/temperature' -m '20.0'
+    mosquitto_pub --host localhost --port 1883 -t 'sensor1/pressure' -m '10.0'
+    mosquitto_pub --host localhost --port 1883 -t 'sensor1/humidity' -m '1.0'
+
+    mosquitto_pub --host localhost --port 1883 -t 'sensor1/temperature' -m '15.0'
+    mosquitto_pub --host localhost --port 1883 -t 'sensor1/pressure' -m '5.0'
+    mosquitto_pub --host localhost --port 1883 -t 'sensor1/humidity' -m '3.0'
+
+    mosquitto_pub --host localhost --port 1883 -t 'sensor1/temperature' -m '17.0'
+    mosquitto_pub --host localhost --port 1883 -t 'sensor1/pressure' -m '6.0'
+    mosquitto_pub --host localhost --port 1883 -t 'sensor1/humidity' -m '4.0'
+    sleep 1
+done
