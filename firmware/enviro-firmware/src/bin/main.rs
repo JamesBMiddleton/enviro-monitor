@@ -9,10 +9,10 @@
 
 use embassy_executor::Spawner;
 use embassy_net::{
-    Runner,
-    // dns::DnsSocket,
-    // tcp::client::{TcpClient, TcpClientState},
-    StackResources,
+    Runner, StackResources,
+    tcp::TcpSocket,
+    IpEndpoint,
+    IpAddress
 };
 use embassy_time::{Duration, Timer};
 use esp_backtrace as _;
@@ -44,6 +44,8 @@ macro_rules! mk_static {
 
 const SSID: &str = env!("SSID");
 const PASSWORD: &str = env!("PASSWORD");
+const SERVER_IP: (u8, u8, u8, u8) = (192, 168, 1, 130);
+const SERVER_PORT: u16 = 8080;
 
 #[allow(
     clippy::large_stack_frames,
@@ -123,14 +125,34 @@ async fn main(spawner: Spawner) -> ! {
 
     if let Some(config) = stack.config_v4() {
         info!("Got IP: {}", config.address);
-    }
+    };
+
+    let mut rx_buffer = [0u8; 1024];
+    let mut tx_buffer = [0u8; 1024];
 
     loop {
-        // info!("Hello world!");
-        Timer::after(Duration::from_secs(1)).await;
-    }
+        let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
+        socket.set_timeout(Some(Duration::from_secs(10)));
 
-    // for inspiration have a look at the examples at https://github.com/esp-rs/esp-hal/tree/esp-hal-v1.2.2/examples
+        let remote = IpEndpoint::new(
+            IpAddress::v4(SERVER_IP.0, SERVER_IP.1, SERVER_IP.2, SERVER_IP.3),
+            SERVER_PORT,
+        );
+        
+        info!("Attempting connection to {}...", remote);
+        if let Err(e) = socket.connect(remote).await {
+            info!("Connection error: {:?}", e);
+            Timer::after(Duration::from_secs(3)).await;
+            continue;
+        };
+
+        if let Err(e) = socket.write(b"Hello World!\n").await {
+            info!("Wrie error: {:?}", e);
+        };
+
+        socket.close();
+        Timer::after(Duration::from_secs(5)).await;
+    }
 }
 
 #[embassy_executor::task]
