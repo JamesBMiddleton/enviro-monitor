@@ -8,17 +8,42 @@
 #![deny(clippy::large_stack_frames)]
 
 use embassy_executor::Spawner;
+use embassy_net::{
+    Runner,
+    // dns::DnsSocket,
+    // tcp::client::{TcpClient, TcpClientState},
+    StackResources,
+};
 use embassy_time::{Duration, Timer};
 use esp_backtrace as _;
-use esp_hal::clock::CpuClock;
-use esp_hal::timer::timg::TimerGroup;
+use esp_hal::{clock::CpuClock, rng::Rng, timer::timg::TimerGroup};
+use esp_radio::wifi::{
+    AuthenticationMethodConfig,
+    Config,
+    ControllerConfig,
+    Interface,
+    // PowerSaveMode, WifiController,
+    scan::ScanConfig,
+    sta::StationConfig,
+};
 use log::info;
-
 extern crate alloc;
 
 // This creates a default app-descriptor required by the esp-idf bootloader.
 // For more information see: <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/app_image_format.html#application-description>
 esp_bootloader_esp_idf::esp_app_desc!();
+
+macro_rules! mk_static {
+    ($t:ty,$val:expr) => {{
+        static STATIC_CELL: static_cell::StaticCell<$t> = static_cell::StaticCell::new();
+        #[deny(unused_attributes)]
+        let x = STATIC_CELL.uninit().write(($val));
+        x
+    }};
+}
+
+const SSID: &str = env!("SSID");
+const PASSWORD: &str = env!("PASSWORD");
 
 #[allow(
     clippy::large_stack_frames,
@@ -55,18 +80,80 @@ async fn main(spawner: Spawner) -> ! {
 
     info!("Embassy initialized!");
 
-    let _wifi_controller =
-        esp_radio::wifi::WifiController::new(peripherals.WIFI, Default::default())
-            .expect("Failed to initialize Wi-Fi controller");
-    let _wifi_interface = esp_radio::wifi::Interface::station();
+    let station_config = Config::Station(
+        StationConfig::default()
+            .with_ssid(SSID.try_into().unwrap())
+            .with_authentication(AuthenticationMethodConfig::Wpa2Personal(
+                PASSWORD.try_into().unwrap(),
+            )),
+    );
+    let wifi_interface = esp_radio::wifi::Interface::station();
+    let mut wifi_controller = esp_radio::wifi::WifiController::new(
+        peripherals.WIFI,
+        ControllerConfig::default().with_initial_config(station_config),
+    )
+    .expect("Failed to initialize Wi-Fi controller");
 
-    // TODO: Spawn some tasks
-    let _ = spawner;
+    info!("Wifi configured and started!");
+
+    let config = embassy_net::Config::dhcpv4(Default::default());
+
+    let rng = Rng::new();
+    let seed = (rng.random() as u64) << 32 | rng.random() as u64;
+
+    let (stack, runner) = embassy_net::new(
+        wifi_interface,
+        config,
+        mk_static!(StackResources<3>, StackResources::<3>::new()),
+        seed,
+    );
+
+    info!("Scanning...");
+
+    let scan_config = ScanConfig::default().with_max(10);
+    let result = wifi_controller.scan_async(&scan_config).await.unwrap();
+    for ap in result {
+        info!("{:?}", ap);
+    }
+
+    spawner.spawn(connection(wifi_controller).unwrap());
+    spawner.spawn(net_task(runner).unwrap());
+
+    stack.wait_config_up().await;
+
+    if let Some(config) = stack.config_v4() {
+        info!("Got IP: {}", config.address);
+    }
 
     loop {
-        info!("Hello world!");
+        // info!("Hello world!");
         Timer::after(Duration::from_secs(1)).await;
     }
 
     // for inspiration have a look at the examples at https://github.com/esp-rs/esp-hal/tree/esp-hal-v1.2.2/examples
+}
+
+#[embassy_executor::task]
+async fn connection(mut controller: esp_radio::wifi::WifiController<'static>) {
+    info!("start connection task");
+    loop {
+        info!("about to connect...");
+
+        match controller.connect_async().await {
+            Ok(info) => {
+                info!("Wifi connected to {:?}", info);
+                let info = controller.wait_for_disconnect_async().await.ok();
+                info!("Wifi disconnected from {:?}", info);
+            }
+            Err(e) => {
+                info!("Wifi failed to connect to {e:?}");
+            }
+        }
+        Timer::after(Duration::from_millis(5000)).await;
+    }
+}
+
+#[embassy_executor::task]
+async fn net_task(mut runner: Runner<'static, Interface>) {
+    runner.run().await;
 }
