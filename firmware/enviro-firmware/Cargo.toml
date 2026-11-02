@@ -47,7 +47,8 @@ esp-radio = { version = "1.0.0-beta.1", features = [
 critical-section = "1.2.0"
 static_cell      = "2.1.1"
 minimq = "0.13.5"
-
+bme68x = "0.2.0"
+embedded-hal-bus = "0.3.0"
 
 # For fine tuning these settings, please refer to https://doc.rust-lang.org/cargo/reference/profiles.html
 [profile.dev]
