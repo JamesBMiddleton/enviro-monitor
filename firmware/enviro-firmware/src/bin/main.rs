@@ -7,26 +7,26 @@
 )]
 #![deny(clippy::large_stack_frames)]
 
+use bme68x::blocking::Bme68x;
+use bme68x::interface::SpiInterface;
+use bme68x::{
+    Configuration, Filter, HeaterConfiguration, OperationMode, Oversampling, StandbyTime,
+};
 use defmt::{error, info};
 use embassy_executor::Spawner;
 use embassy_net::{IpAddress, IpEndpoint, Runner, StackResources, tcp::TcpSocket};
 use embassy_time::{Duration, Timer};
-use embedded_io_async::{ErrorType, Read, Write};
-use esp_hal::spi::{
-    Mode,
-    master::Spi,
-};
-use esp_hal::{clock::CpuClock, rng::Rng, timer::timg::TimerGroup, time::Rate};
 use embedded_hal_bus::spi::ExclusiveDevice;
+use embedded_io_async::{ErrorType, Read, Write};
 use esp_hal::gpio::{Level, Output, OutputConfig};
+use esp_hal::spi::{Mode, master::Spi};
+use esp_hal::{clock::CpuClock, rng::Rng, time::Rate, timer::timg::TimerGroup};
 use esp_println as _;
 use esp_radio::wifi::{
     AuthenticationMethodConfig, Config, ControllerConfig, Interface, scan::ScanConfig,
     sta::StationConfig,
 };
 use minimq::{Buffers, ConfigBuilder, Publication, Session};
-use bme68x::blocking::Bme68x;
-use bme68x::interface::SpiInterface;
 
 #[panic_handler]
 fn panic(panic_info: &core::panic::PanicInfo) -> ! {
@@ -92,16 +92,36 @@ async fn main(spawner: Spawner) -> ! {
         esp_hal::spi::master::Config::default()
             .with_frequency(Rate::from_khz(100))
             .with_mode(Mode::_0),
-    ).unwrap().with_sck(peripherals.GPIO8)
+    )
+    .unwrap()
+    .with_sck(peripherals.GPIO8)
     .with_mosi(peripherals.GPIO9)
     .with_miso(peripherals.GPIO10);
     let cs = Output::new(peripherals.GPIO20, Level::High, OutputConfig::default());
-    
+
     let spi_device = ExclusiveDevice::new(spi_bus, cs, esp_hal::delay::Delay::new()).unwrap();
 
     let spi_interface = SpiInterface::new(spi_device);
 
-    let mut _bme688 = Bme68x::new(spi_interface, esp_hal::delay::Delay::new()); 
+    let mut sensor = Bme68x::new(spi_interface, esp_hal::delay::Delay::new()).unwrap();
+    let configuration = Configuration {
+        humidity_oversampling: Oversampling::X16,
+        temperature_oversampling: Oversampling::X2,
+        pressure_oversampling: Oversampling::X1,
+        filter: Filter::Off,
+        standby_time: StandbyTime::None,
+    };
+    let heater = HeaterConfiguration::Forced {
+        enabled: true,
+        temperature_celsius: 300,
+        duration_ms: 100,
+    };
+
+    sensor.set_configuration(&configuration).unwrap();
+    sensor.set_heater_configuration(&heater).unwrap();
+    sensor.set_operation_mode(OperationMode::Forced).unwrap();
+
+    info!("Configured BME688 Sensor!");
 
     let station_config = Config::Station(
         StationConfig::default()
@@ -160,6 +180,20 @@ async fn main(spawner: Spawner) -> ! {
     let mut tcp_tx_buffer = [0u8; 1024];
 
     loop {
+        let conversion_us =
+            bme68x::compensation::measurement_duration_us(OperationMode::Forced, &configuration)
+                + 100_000;
+
+        // wait for compensation before reading
+        Timer::after(Duration::from_micros(conversion_us as u64)).await;
+
+        let fields = sensor.measurements(OperationMode::Forced).unwrap();
+        let field = fields.as_slice().first().unwrap();
+
+        let temp = field.values.temperature;
+        let temp_bytes = temp.to_le_bytes();
+        let temp_slice: &[u8] = &temp_bytes;
+
         let mut io = MqttIo {
             socket: TcpSocket::new(stack, &mut tcp_rx_buffer, &mut tcp_tx_buffer),
         };
@@ -178,7 +212,7 @@ async fn main(spawner: Spawner) -> ! {
         };
 
         let mut conn = mqtt_session.connect(io.socket).await.unwrap();
-        conn.publish(Publication::new("sensor1/temperature", "42.5"))
+        conn.publish(Publication::new("sensor1/temperature", temp_slice))
             .await
             .unwrap();
         conn.disconnect().await.unwrap();
