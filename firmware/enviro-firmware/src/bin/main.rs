@@ -30,7 +30,7 @@ use minimq::{Buffers, ConfigBuilder, Publication, Session};
 
 #[panic_handler]
 fn panic(panic_info: &core::panic::PanicInfo) -> ! {
-    error!("{}", panic_info);
+    error!("{}\n{}", panic_info, defmt::Display2Format(&panic_info));
     loop {}
 }
 
@@ -97,7 +97,7 @@ async fn main(spawner: Spawner) -> ! {
     .with_sck(peripherals.GPIO8)
     .with_mosi(peripherals.GPIO9)
     .with_miso(peripherals.GPIO10);
-    let cs = Output::new(peripherals.GPIO20, Level::High, OutputConfig::default());
+    let cs = Output::new(peripherals.GPIO3, Level::High, OutputConfig::default());
 
     let spi_device = ExclusiveDevice::new(spi_bus, cs, esp_hal::delay::Delay::new()).unwrap();
 
@@ -188,11 +188,18 @@ async fn main(spawner: Spawner) -> ! {
         Timer::after(Duration::from_micros(conversion_us as u64)).await;
 
         let fields = sensor.measurements(OperationMode::Forced).unwrap();
-        let field = fields.as_slice().first().unwrap();
+        let field = fields.as_slice().first();
 
-        let temp = field.values.temperature;
+        if field == None {
+            info!("No new data, looping");
+            continue;
+        }
+
+        let temp = (field.unwrap().values.temperature as f32) / 100.0;
         let temp_bytes = temp.to_le_bytes();
         let temp_slice: &[u8] = &temp_bytes;
+
+        info!("Read temp value: {}", temp);
 
         let mut io = MqttIo {
             socket: TcpSocket::new(stack, &mut tcp_rx_buffer, &mut tcp_tx_buffer),
