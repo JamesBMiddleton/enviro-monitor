@@ -179,52 +179,67 @@ async fn main(spawner: Spawner) -> ! {
     let mut tcp_rx_buffer = [0u8; 1024];
     let mut tcp_tx_buffer = [0u8; 1024];
 
+    let sensor_measurement_duration =
+        bme68x::compensation::measurement_duration_us(OperationMode::Forced, &configuration)
+            + 100_000;
+    let measurement_interval =
+        Duration::from_micros(sensor_measurement_duration as u64) + Duration::from_secs(5);
+
+    let mut io = MqttIo {
+        socket: TcpSocket::new(stack, &mut tcp_rx_buffer, &mut tcp_tx_buffer),
+    };
+    io.socket.set_timeout(Some(Duration::from_secs(10)));
+
+    let remote = IpEndpoint::new(
+        IpAddress::v4(SERVER_IP.0, SERVER_IP.1, SERVER_IP.2, SERVER_IP.3),
+        SERVER_PORT,
+    );
+
+    info!("Attempting connection to {}...", remote);
+    loop {
+        match io.socket.connect(remote).await {
+            Ok(_) => break,
+            Err(e) => {
+                info!("Connection error: {:?}", e);
+                Timer::after(Duration::from_secs(3)).await;
+            }
+        }
+    }
+
+    let mut conn = mqtt_session.connect(io.socket).await.unwrap();
+
     loop {
         sensor.set_operation_mode(OperationMode::Forced).unwrap();
 
-        let conversion_us =
-            bme68x::compensation::measurement_duration_us(OperationMode::Forced, &configuration)
-                + 100_000;
-
-        // wait for compensation before reading
-        Timer::after(Duration::from_micros(conversion_us as u64)).await;
+        Timer::after(measurement_interval).await;
 
         let fields = sensor.measurements(OperationMode::Forced).unwrap();
         let field = fields.as_slice().first();
-
-        if field == None {
-            info!("No new data, looping");
-            continue;
-        }
-
         let mut buffer = ryu::Buffer::new();
-        let temp: &str = buffer.format((field.unwrap().values.temperature as f32) / 100.0);
 
-        info!("Read temp value: {}", temp);
-
-        let mut io = MqttIo {
-            socket: TcpSocket::new(stack, &mut tcp_rx_buffer, &mut tcp_tx_buffer),
-        };
-        io.socket.set_timeout(Some(Duration::from_secs(10)));
-
-        let remote = IpEndpoint::new(
-            IpAddress::v4(SERVER_IP.0, SERVER_IP.1, SERVER_IP.2, SERVER_IP.3),
-            SERVER_PORT,
-        );
-
-        info!("Attempting connection to {}...", remote);
-        if let Err(e) = io.socket.connect(remote).await {
-            info!("Connection error: {:?}", e);
-            Timer::after(Duration::from_secs(3)).await;
-            continue;
-        };
-
-        let mut conn = mqtt_session.connect(io.socket).await.unwrap();
-        conn.publish(Publication::new("sensor1/temperature", temp))
+        let temperature: &str = buffer.format((field.unwrap().values.temperature as f32) / 100.0);
+        info!("Read temperature value: {}C", temperature);
+        conn.publish(Publication::new("sensor1/temperature", temperature))
             .await
             .unwrap();
-        conn.disconnect().await.unwrap();
-        Timer::after(Duration::from_secs(5)).await;
+
+        let pressure: &str = buffer.format((field.unwrap().values.pressure as f32) / 100.0);
+        info!("Read pressure value: {}hPa", pressure);
+        conn.publish(Publication::new("sensor1/pressure", pressure))
+            .await
+            .unwrap();
+
+        let humidity: &str = buffer.format((field.unwrap().values.humidity as f32) / 1000.0);
+        info!("Read humidity value: {}%", humidity);
+        conn.publish(Publication::new("sensor1/humidity", humidity))
+            .await
+            .unwrap();
+
+        let gas_resistance: &str = buffer.format(field.unwrap().values.gas_resistance as f32);
+        info!("Read gas_resistance value: {}Ohms", gas_resistance);
+        conn.publish(Publication::new("sensor1/gas_resistance", gas_resistance))
+            .await
+            .unwrap();
     }
 }
 
@@ -235,8 +250,8 @@ impl<'a> ErrorType for MqttIo<'a> {
     type Error = embassy_net::tcp::Error;
 }
 impl<'a> Read for MqttIo<'a> {
-    async fn read(&mut self, _buf: &mut [u8]) -> Result<usize, Self::Error> {
-        todo!() // I'm not reading anything
+    async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
+        self.socket.read(buf).await
     }
 }
 impl<'a> Write for MqttIo<'a> {
