@@ -180,6 +180,8 @@ async fn main(spawner: Spawner) -> ! {
     let mut tcp_tx_buffer = [0u8; 1024];
 
     loop {
+        sensor.set_operation_mode(OperationMode::Forced).unwrap();
+
         let conversion_us =
             bme68x::compensation::measurement_duration_us(OperationMode::Forced, &configuration)
                 + 100_000;
@@ -195,9 +197,8 @@ async fn main(spawner: Spawner) -> ! {
             continue;
         }
 
-        let temp = (field.unwrap().values.temperature as f32) / 100.0;
-        let temp_bytes = temp.to_le_bytes();
-        let temp_slice: &[u8] = &temp_bytes;
+        let mut buffer = ryu::Buffer::new();
+        let temp: &str = buffer.format((field.unwrap().values.temperature as f32) / 100.0);
 
         info!("Read temp value: {}", temp);
 
@@ -219,7 +220,7 @@ async fn main(spawner: Spawner) -> ! {
         };
 
         let mut conn = mqtt_session.connect(io.socket).await.unwrap();
-        conn.publish(Publication::new("sensor1/temperature", temp_slice))
+        conn.publish(Publication::new("sensor1/temperature", temp))
             .await
             .unwrap();
         conn.disconnect().await.unwrap();

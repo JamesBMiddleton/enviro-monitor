@@ -768,6 +768,7 @@ dependencies = [
  "esp-radio",
  "esp-rtos",
  "minimq",
+ "ryu",
  "static_cell",
 ]
 
