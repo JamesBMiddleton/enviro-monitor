@@ -6,7 +6,7 @@ A minimal, complete IoT system. Motivation for the project was exposure to each 
   <img width="30%" alt="iot_diagram drawio-2" src="https://github.com/user-attachments/assets/4935b8a9-5c1f-4ba5-b318-0229fddedcc1" />
 </p>
 <p align="center">
-
+  <img width="80%" alt="Screenshot_20261104_160929" src="https://github.com/user-attachments/assets/fa640874-cc4b-4c25-9640-a338b47d709c" />
 </p>
 
 ## Setup
